@@ -1,0 +1,219 @@
+---
+title: "exercise3"
+author: "yixun"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r,echo=F}
+library(kableExtra)
+```
+
+```{r, message = F}
+library(readr)
+library(quanteda)
+library(quanteda.textstats)
+library(stringdist)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+```
+
+```{r}
+#create tweets data set
+tweets <- readRDS(gzcon(url("https://github.com/cjbarrie/CTA-ED/blob/main/data/comparison-complexity/cabinet_tweets.rds?raw=true")))
+```
+
+```{r}
+#look the data
+head(tweets)
+```
+
+```{r}
+unique(tweets$username) #delete the repeated values
+length(unique(tweets$username)) #calculate how many users after deleting repeated values
+```
+
+```{r}
+tweets_corpus <- corpus(tweets, text_field = "tweet")
+#create corpus dataset, specifying the text field is tweet from tweets dataset
+```
+
+```{r}
+docvars(tweets_corpus, "username") <- tweets$username
+tweets_corpus
+#ceated a variable(username) in corpus dataset
+```
+
+```{r}
+dfmat <- dfm(tokens(tweets_corpus),
+             remove_punct = TRUE,
+             remove = stopwords("english"))
+dfmat
+#reformat this data martix, tokenize tweets in corpus, and remove some english stopwordsand punction
+#can't understand the matrix
+```
+
+
+
+#correlation similarity
+```{r}
+corrmat <- dfmat %>% #create a variable, using data matrix from dfmat(tokenized corpus)
+  dfm_group(group = username) %>% (#use username as criteria to divide every group)
+  textstat_simil(margin = "documents", method = "correlation") 
+  #calulate the similarity between documents, "margin" means consider what to calculate similarity
+
+corrmat[1:5,1:5] #keep the first 5 columns and volumns
+```
+
+#cosine similarity
+```{r}
+cos_sim <- dfmat %>%
+  dfm_group(groups = username) %>%
+  textstat_simil(margin = "documents", method = "cosine")
+```
+
+```{r}
+cosmat <- as.matrix(cos_sim)
+#create a matrix for cos_sim
+```
+
+```{r}
+cosmatdf <- as.data.frame(cosmat[23,c(1:22,24)])
+#exclude herself's data, and this dataste is only related to Therasa May
+```
+
+```{r}
+colnames(cosmatdf) <- "corr_may" #rename
+
+cosmatdf <- tibble::rownames_to_column(cosmatdf,"username") #把行转换为列并且重新赋值给cosmatdf
+```
+
+```{r}
+ggplot(cosmatdf) +
+  geom_point(aes(x=reorder(username, -corr_may), y= corr_may)) + 
+  coord_flip() +
+  xlab("MP username") +
+  ylab("Cosine similarity score") + 
+  theme_minimal()
+```
+
+```{r}
+#specify different similarity measures to explore
+methods <- c("correlation", "cosine", "dice", "edice")
+
+#create empty dataframe
+testdf_all <- data.frame()
+
+#gen for loop across methods types
+for (i in seq_along(methods)) {
+  
+  #pass method to character string object
+  sim_method <- methods[[i]]
+  
+  #estimate similarity, grouping by username
+  test <- dfmat %>%
+    dfm_group(groups = username) %>%
+    textstat_simil(margin = "documents", method = sim_method) #specify method here as character object created above
+  
+  testm <- as.matrix(test) #convert to a matrix
+  
+  #generate data frame keeping only the row for Theresa May
+  testdf <- as.data.frame(testm[23, c(1:22, 24)])
+  
+  #rename column
+  colnames(testdf) <- "corr_may"
+  
+  #create column variable from rownames
+  testdf <- tibble::rownames_to_column(testdf, "username")
+  
+  #record method in new column variable
+  testdf$method <- sim_method
+
+  #bind all together
+  testdf_all <- rbind(testdf_all, testdf)  
+  
+}
+
+#create variable (for viz only) that is mean of similarity scores for each MP
+testdf_all <- testdf_all %>%
+  group_by(username) %>%
+  mutate(mean_sim = mean(corr_may))
+
+ggplot(testdf_all) +
+  geom_point( aes(x=reorder(username, -mean_sim), y= corr_may, color = method)) + 
+  coord_flip() +
+  xlab("MP username") +
+  ylab("Similarity score") + 
+  theme_minimal()
+```
+
+#measure complexity
+```{r}
+speeches  <- readRDS(gzcon(url("https://github.com/cjbarrie/CTA-ED/blob/main/data/comparison-complexity/speeches.rds?raw=true")))
+```
+
+```{r}
+head(speeches)
+```
+
+```{r}
+speeches$flesch.kincaid <- textstat_readability(speeches$text, measure = "Flesch.Kincaid")
+
+# returned as quanteda data.frame with document-level information;
+# need just the score:
+speeches$flesch.kincaid <- speeches$flesch.kincaid$Flesch.Kincaid
+```
+
+```{r}
+
+sum_corpus <- speeches %>%
+  group_by(speaker) %>%
+  summarise(mean = mean(flesch.kincaid, na.rm=TRUE),
+                   SD=sd(flesch.kincaid, na.rm=TRUE),
+                   N=length(speaker))
+
+# calculate standard errors and confidence intervals
+sum_corpus$se <- sum_corpus$SD / sqrt(sum_corpus$N)
+sum_corpus$min <- sum_corpus$mean - 1.96*sum_corpus$se
+sum_corpus$max <- sum_corpus$mean + 1.96*sum_corpus$se
+```
+
+```{r}
+sum_corpus
+```
+
+```{r}
+ggplot(sum_corpus, aes(x=speaker, y=mean)) +
+  geom_bar(stat="identity") + 
+  geom_errorbar(ymin=sum_corpus$min,ymax=sum_corpus$max, width=.2) +
+  coord_flip() +
+  xlab("") +
+  ylab("Mean Complexity") + 
+  theme_minimal() + 
+  ylim(c(0,20))
+```
